@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Chrome Profile Manager
+Comment=Quản lý Chrome Profile độc lập
+Exec=/opt/chrome-profile-manager/chrome-profile-manager
+Icon=google-chrome
+Terminal=false
+Categories=Utility;WebBrowser;
