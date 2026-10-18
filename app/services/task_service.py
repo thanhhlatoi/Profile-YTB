@@ -114,14 +114,14 @@ class TaskService:
         for profile in self.targets(self.get(task_id)):
             self.publisher.request_stop(profile.id)
 
-    def run(self, task_id: str) -> None:
+    def run(self, task_id: str, overrides: dict | None = None) -> None:
         with self.session_factory() as session:
             task = session.get(Task, task_id)
             if not task:
                 raise ValueError("Không tìm thấy tác vụ")
             task.status, task.last_error = TaskStatus.RUNNING, ""
             session.commit()
-        payload = json.loads(task.payload or "{}")
+        payload = {**json.loads(task.payload or "{}"), **(overrides or {})}
         delay = max(0, int(payload.get("delaySeconds", 0)))
         errors = []
         try:

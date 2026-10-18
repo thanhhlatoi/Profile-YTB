@@ -37,6 +37,30 @@ class Controller:
             settings = {}
         return {**DEFAULT_AGENT_POLICY, **settings.get("agent", {})}
 
+    def agent_limits(self, targets, visibility=None, max_videos=None) -> dict:
+        """Check an agent publish against settings.json and return the capped values."""
+        policy = self.agent_policy()
+        for target in targets:
+            effective = visibility or json.loads(target.automation_config or "{}").get(
+                "visibility", "public"
+            )
+            if effective not in policy["allowed_visibility"]:
+                raise PermissionError(
+                    f"Agent không được public ở chế độ '{effective}' ({target.name}). "
+                    f"Cho phép: {', '.join(policy['allowed_visibility'])}"
+                )
+        limit = int(policy["max_videos"])
+        return {"maxVideos": max(1, min(int(max_videos or limit), limit))}
+
+    def _agent_task_overrides(self, task) -> dict | None:
+        """Agent running a saved publish task: apply the same limits to its stored settings."""
+        if task.action_type != ActionType.PUBLISH_YOUTUBE:
+            return None
+        payload = json.loads(task.payload or "{}")
+        return self.agent_limits(
+            self.tasks.targets(task), payload.get("visibility"), payload.get("maxVideos")
+        )
+
     def _pick(self, names=None, group=None, all=False):
         profiles = self.profiles.list()
         if all:
@@ -108,6 +132,24 @@ class Controller:
     def cmd_check(self, agent=False, profile=None):
         return self.tasks.publisher.preview(self._pick([profile])[0].id)
 
+    def cmd_channel_status(self, agent=False, profile=None):
+        """Read only: profile state and the latest publish run. Does not open YouTube."""
+        if not profile:
+            raise ValueError("Cần tên profile")
+        chosen = self._pick([profile])[0]
+        self.process.discover()
+        runs = []
+        for task in self.tasks.list():
+            if task.action_type == ActionType.PUBLISH_YOUTUBE:
+                runs += [r for r in self.tasks.history(task.id, 20) if r.profile_id == chosen.id]
+        runs.sort(key=lambda r: r.started_at, reverse=True)
+        return {
+            "profile": self._profile_dict(chosen),
+            "visibility": json.loads(chosen.automation_config or "{}").get("visibility", "public"),
+            "publish_runs_recorded": len(runs),
+            "last_publish": self._run_dict(runs[0]) if runs else None,
+        }
+
     def cmd_list_tasks(self, agent=False):
         names = {p.id: p.name for p in self.profiles.list()}
         return [
@@ -130,18 +172,7 @@ class Controller:
         targets = self._pick([profile] if profile else None, group)
         payload = {}
         if agent:
-            policy = self.agent_policy()
-            limit = int(policy["max_videos"])
-            max_videos = min(max_videos or limit, limit)
-            for target in targets:
-                effective = visibility or json.loads(target.automation_config or "{}").get(
-                    "visibility", "public"
-                )
-                if effective not in policy["allowed_visibility"]:
-                    raise PermissionError(
-                        f"Agent không được public ở chế độ '{effective}' ({target.name}). "
-                        f"Cho phép: {', '.join(policy['allowed_visibility'])}"
-                    )
+            max_videos = self.agent_limits(targets, visibility, max_videos)["maxVideos"]
         if max_videos is not None:
             payload["maxVideos"] = int(max_videos)
         if visibility:
@@ -155,16 +186,17 @@ class Controller:
             payload=json.dumps(payload),
             schedule_type="immediate",
         )
-        return self.cmd_run_task(task=task.id, wait=wait)
+        return self.cmd_run_task(agent=agent, task=task.id, wait=wait)
 
     def cmd_run_task(self, agent=False, task=None, wait=False):
         chosen = self._task(task)
+        overrides = self._agent_task_overrides(chosen) if agent else None
         if self.scheduler and not wait:
-            self.scheduler.run_now(chosen.id)
+            self.scheduler.run_now(chosen.id, overrides)
             return {"task_id": chosen.id, "name": chosen.name, "started": True,
                     "hint": "Dùng status để theo dõi tiến độ"}
         try:
-            self.tasks.run(chosen.id)
+            self.tasks.run(chosen.id, overrides)
         except Exception:
             pass  # Recorded in task status and history.
         return self.cmd_status(task=chosen.id)

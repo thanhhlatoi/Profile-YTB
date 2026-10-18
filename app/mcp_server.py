@@ -63,6 +63,13 @@ def publish(
 
 
 @server.tool()
+def channel_status(profile: str) -> dict:
+    """Trạng thái một kênh, KHÔNG mở YouTube: profile có đang mở không, link kênh, chế độ hiển
+    thị mặc định, và lần đăng gần nhất (kết quả hoặc lỗi). Dùng check_channel để xem nháp."""
+    return _call("channel_status", profile=profile)
+
+
+@server.tool()
 def task_status(task: str) -> dict:
     """Tiến độ tác vụ theo ID hoặc tên: status, finished, progress từng profile
     (currentIndex/totalVideos/success/failed) và kết quả từng profile."""
