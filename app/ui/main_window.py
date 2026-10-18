@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -205,7 +204,6 @@ class MainWindow(QMainWindow):
         self.profile_label = QLabel()
         self.dashboard_label = QLabel()
         self.task_label = QLabel()
-        self.trash_label = QLabel()
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.settings_view = QTextEdit()
@@ -224,18 +222,17 @@ class MainWindow(QMainWindow):
         nav = QListWidget()
         nav.addItems(
             [
-                "Tổng quan", "Chrome Profiles", "Tác vụ", "AI Agent",
-                "Thùng rác", "Nhật ký", "Cài đặt",
+                "Tổng quan", "Chrome Profiles", "Tác vụ", "AI Agent", "Nhật ký", "Cài đặt",
             ]
         )
         nav.setObjectName("sidebar")
         nav.setFixedWidth(210)
         nav.currentRowChanged.connect(self.stack.setCurrentIndex)
         nav.currentRowChanged.connect(lambda _row: self.refresh())
-        self.dashboard, self.profile_page, self.task_page, self.ai_page, self.trash_page = (
-            QWidget() for _ in range(5)
+        self.dashboard, self.profile_page, self.task_page, self.ai_page = (
+            QWidget() for _ in range(4)
         )
-        pages = (self.dashboard, self.profile_page, self.task_page, self.ai_page, self.trash_page)
+        pages = (self.dashboard, self.profile_page, self.task_page, self.ai_page)
         for page in pages:
             self.stack.addWidget(page)
         self.stack.addWidget(self.log_view)
@@ -244,7 +241,6 @@ class MainWindow(QMainWindow):
         self._build_profiles()
         self._build_tasks()
         self._build_ai_agent()
-        self._build_trash()
         central = QWidget()
         layout = QHBoxLayout(central)
         layout.addWidget(nav)
@@ -523,30 +519,10 @@ class MainWindow(QMainWindow):
         )
         layout.addStretch()
 
-    def _build_trash(self):
-        layout = QVBoxLayout(self.trash_page)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.addWidget(self._page_title("Thùng rác"))
-        layout.addWidget(self._muted("Profile đã xóa mềm có thể khôi phục hoặc xóa vĩnh viễn."))
-        self.trash_list = QListWidget()
-        self.trash_list.setObjectName("trashList")
-        layout.addWidget(self.trash_list)
-        actions = QHBoxLayout()
-        actions.addWidget(
-            self._button("Khôi phục profile đã chọn", self.restore_selected, "primaryButton")
-        )
-        actions.addWidget(
-            self._button("Xóa vĩnh viễn", self.permanent_delete_selected, "dangerButton")
-        )
-        actions.addStretch()
-        layout.addLayout(actions)
-        layout.addWidget(self.trash_label)
-
     def refresh(self):
         self.refresh_profiles()
         try:
             self.render_tasks(self.task_service.list(), self.profile_service.list())
-            self.render_trash()
             self.render_logs()
             self.render_settings()
         except Exception as exc:
@@ -623,11 +599,25 @@ class MainWindow(QMainWindow):
     def render_profiles(self, profiles):
         """Rebuild visible rows without moving the user's scroll position or selection."""
         table = self.profile_list
+        # The 3 s poll usually finds nothing new; skip the rebuild so selection/scroll stay put.
+        signature = tuple(
+            (p.id, p.name, p.color, p.pinned, p.important, p.notes, p.status, p.group_name,
+             p.purpose, p.tags, p.imported, p.profile_directory, p.remote_debugging, p.debug_port)
+            for p in profiles
+        )
+        if signature == getattr(self, "_rendered_signature", None):
+            return
+        self._rendered_signature = signature
         scrollbar = table.verticalScrollBar()
         scroll_value = scrollbar.value()
         selected_ids = set(self.selected_ids())
         current_id = self._row_id(table.currentRow())
 
+        header = table.horizontalHeader()
+        # ResizeToContents re-measures every row on each setItem (quadratic); measure once instead.
+        modes = [header.sectionResizeMode(c) for c in range(table.columnCount())]
+        for column in range(table.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
         table.setUpdatesEnabled(False)
         table.blockSignals(True)
         try:
@@ -674,6 +664,8 @@ class MainWindow(QMainWindow):
                         table.model().index(row, 1), selection.SelectionFlag.NoUpdate
                     )
         finally:
+            for column, mode in enumerate(modes):
+                header.setSectionResizeMode(column, mode)
             table.blockSignals(False)
             table.setUpdatesEnabled(True)
         self.update_profile_actions()
@@ -830,7 +822,7 @@ class MainWindow(QMainWindow):
             )
         menu.addSeparator()
         menu.addAction("★  Đánh dấu / bỏ quan trọng", self.toggle_selected_important)
-        menu.addAction("🗑  Chuyển vào thùng rác", self.delete_selected)
+        menu.addAction("🗑  Xóa vĩnh viễn", self.delete_selected)
         menu.exec(self.profile_list.viewport().mapToGlobal(position))
 
     def delete_selected(self):
@@ -841,28 +833,36 @@ class MainWindow(QMainWindow):
         names = "\n".join(f"  • {p.name}" for p in profiles[:10])
         more = f"\n  … và {len(profiles) - 10} profile khác" if len(profiles) > 10 else ""
         warning = (
-            "\n\nCó profile Chrome gốc: thư mục dữ liệu sẽ được chuyển khỏi thư mục "
-            "Chrome vào thùng rác."
+            "\n\nCó profile Chrome gốc: hãy ĐÓNG HẾT Google Chrome trước. Profile sẽ bị gỡ "
+            "khỏi Chrome luôn."
             if any(p.imported for p in profiles)
             else ""
         )
         if (
-            QMessageBox.question(
+            QMessageBox.warning(
                 self,
-                "Chuyển vào thùng rác",
-                f"Chuyển {len(profiles)} profile vào thùng rác?\n{names}{more}\n"
-                f"Có thể khôi phục trong mục Thùng rác.{warning}",
+                "Xóa vĩnh viễn",
+                f"Xóa vĩnh viễn {len(profiles)} profile?\n{names}{more}\n\n"
+                "Toàn bộ dữ liệu (đăng nhập, cookie, lịch sử, extension), tác vụ và lịch sử "
+                f"chạy của các profile này sẽ bị xóa khỏi máy. KHÔNG THỂ khôi phục.{warning}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             != QMessageBox.StandardButton.Yes
         ):
             return
         errors = []
-        for profile in profiles:
-            try:
-                self.profile_service.delete(profile.id)
-            except Exception as exc:
-                errors.append(f"{profile.name}: {exc}")
-        self.log(f"Chuyển {len(profiles) - len(errors)} profile vào thùng rác")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for profile in profiles:
+                try:
+                    for task_id in self.profile_service.delete(profile.id):
+                        self.scheduler_service.unschedule(task_id)
+                except Exception as exc:
+                    errors.append(f"{profile.name}: {exc}")
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.log(f"Đã xóa vĩnh viễn {len(profiles) - len(errors)} profile")
         self.refresh()
         if errors:
             QMessageBox.warning(self, "Không thể xóa", "\n".join(errors))
@@ -1112,36 +1112,6 @@ class MainWindow(QMainWindow):
         groups = {p.group_name for p in self.profile_service.list() if p.group_name}
         return sorted(groups, key=str.casefold)
 
-    def render_trash(self):
-        self.trash_list.clear()
-        for profile in self.profile_service.list(True):
-            if profile.deleted:
-                item = QListWidgetItem(
-                    f"{profile.name}  •  xóa lúc {profile.updated_at:%d/%m/%Y %H:%M}"
-                )
-                item.setData(Qt.ItemDataRole.UserRole, profile.id)
-                self.trash_list.addItem(item)
-        self.trash_label.setText(f"{self.trash_list.count()} profile trong thùng rác")
-
-    def restore_selected(self):
-        item = self.trash_list.currentItem()
-        if item:
-            self._run_action(self.profile_service.restore, item.data(Qt.ItemDataRole.UserRole))
-
-    def permanent_delete_selected(self):
-        item = self.trash_list.currentItem()
-        if item and (
-            QMessageBox.question(
-                self,
-                "Xác nhận",
-                f"Xóa vĩnh viễn '{item.text()}'?\nDữ liệu Chrome sẽ không thể khôi phục.",
-            )
-            == QMessageBox.StandardButton.Yes
-        ):
-            self._run_action(
-                self.profile_service.permanent_delete, item.data(Qt.ItemDataRole.UserRole)
-            )
-
     def log(self, message):
         self.statusBar().showMessage(message, 6000)
         self.paths.logs.mkdir(parents=True, exist_ok=True)
@@ -1240,11 +1210,6 @@ class MainWindow(QMainWindow):
         self.tray.show()
 
     def closeEvent(self, event):
-        # GNOME without the AppIndicator extension has no tray: hiding would orphan the app.
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            event.accept()
-            QApplication.quit()
-            return
-        event.ignore()
-        self.hide()
-        self.tray.showMessage("Chrome Profile Manager", "Ứng dụng vẫn chạy trong system tray")
+        # Đóng cửa sổ = thoát hẳn (không chạy ngầm trong khay).
+        event.accept()
+        QApplication.quit()

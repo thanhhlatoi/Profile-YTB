@@ -6,7 +6,7 @@ from app.utils.validation import ProfileInput
 
 
 def valid_binary(tmp_path):
-    binary = tmp_path / "chrome"
+    binary = tmp_path / ("chrome.exe" if os.name == "nt" else "chrome")
     binary.write_text("#!/bin/sh\n")
     binary.chmod(os.stat(binary).st_mode | 0o111)
     return str(binary)

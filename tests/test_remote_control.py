@@ -34,7 +34,7 @@ class FakePublisher:
 def controller(tmp_path):
     paths = AppPaths.create(tmp_path / "data")
     factory = create_session_factory(paths.db_url)
-    binary = tmp_path / "chrome"
+    binary = tmp_path / ("chrome.exe" if os.name == "nt" else "chrome")
     binary.write_text("x")
     binary.chmod(os.stat(binary).st_mode | 0o111)
     profiles = ProfileService(paths, factory)
@@ -79,7 +79,8 @@ def test_socket_round_trip_and_mcp_tool(controller, tmp_path, monkeypatch):
     server = control_server.ControlServer(path, ctl)
     server.start()
     try:
-        assert oct(path.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":  # Windows has no Unix permission bits.
+            assert oct(path.stat().st_mode & 0o777) == "0o600"
         names = [p["name"] for p in control_server.call(path, "list_profiles")]
         assert names == ["A", "B"]
         with pytest.raises(control_server.ControlError, match="Không tìm thấy profile"):

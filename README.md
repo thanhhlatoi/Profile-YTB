@@ -67,7 +67,7 @@ sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-xinerama0
 |---|---|
 | `Enter` / nhấp đúp | Mở profile đang chọn |
 | `F2` | Sửa profile |
-| `Delete` | Chuyển vào thùng rác |
+| `Delete` | Xóa vĩnh viễn (có hỏi xác nhận) |
 | `Ctrl+N` | Thêm profile |
 | `Ctrl+F` | Tìm kiếm |
 | `Ctrl+A` | Chọn tất cả (khi đang ở bảng) |
@@ -75,13 +75,18 @@ sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-xinerama0
 
 Chọn nhiều dòng bằng `Ctrl` + click hoặc `Shift` + click.
 
-### Thùng rác
+### Xóa profile
 
-Khi bấm **Xóa**, profile được **chuyển vào thùng rác**, dữ liệu chưa mất. Vào mục *Thùng rác* để
-**Khôi phục** hoặc **Xóa vĩnh viễn**.
+Bấm **Xóa** (hoặc phím `Delete`) và xác nhận để **xóa vĩnh viễn**, không khôi phục được:
 
-Với profile Chrome gốc, thư mục `~/.config/google-chrome/Profile N` cũng được chuyển vào thùng
-rác và trả về chỗ cũ khi khôi phục. Tên của profile đang nằm trong thùng rác chưa dùng lại được.
+- Toàn bộ thư mục dữ liệu của profile (đăng nhập, cookie, lịch sử, extension, cache).
+- Với profile Chrome gốc: thư mục `Profile N` trong thư mục Chrome (`~/.config/google-chrome` trên
+  Ubuntu, `%LOCALAPPDATA%\Google\Chrome\User Data` trên Windows) và mục của nó trong file
+  `Local State`, nên profile cũng biến mất khỏi Chrome. Phải **đóng hết Google Chrome** trước.
+- Tác vụ chỉ chạy cho profile đó và lịch sử chạy của nó. Tác vụ theo nhóm được giữ cho các profile
+  còn lại trong nhóm.
+
+Profile còn nằm trong thùng rác từ phiên bản cũ được xóa hẳn ở lần mở app tiếp theo.
 
 ### Form thêm/sửa profile
 
@@ -355,61 +360,83 @@ Tác vụ theo lịch **chỉ chạy khi app đang mở**, kể cả khi ẩn d�
 
 ### 3.8 Điều khiển bằng Hermes Agent
 
-Hermes Agent (Nous Research) chạy trên **máy khác trong mạng nhà** (ví dụ laptop) và điều khiển
-Profile YTB trên máy Ubuntu này. Bạn chat kiểu *“kiểm tra kênh A rồi public 3 video private”*.
+Hermes Agent (Nous Research) chạy trên **VPS** hoặc một máy khác, và điều khiển Profile YTB trên máy
+Windows/Ubuntu của bạn. Bạn chat (trong terminal hoặc **qua Telegram**) kiểu *“mở profile Hung NT1”*,
+*“kiểm tra kênh A rồi public 3 video private”*.
 
 ```
-Hermes (laptop) ──SSH, khóa chỉ chạy được MCP──► profile-ytb-mcp ──socket nội bộ──► App Profile YTB ──► Chrome
+Telegram ─► Hermes (VPS) ──SSH qua Tailscale/NetBird, khóa chỉ chạy được MCP──► profile-ytb-mcp
+                                                   ──kết nối nội bộ──► App Profile YTB ──► Chrome
 ```
 
 **Vì sao an toàn**
 - Khóa SSH của Hermes **chỉ chạy được MCP server**: không mở được shell, không forward được cổng.
-- Không cần mở cổng nào trên router.
-- Socket điều khiển chỉ user của bạn truy cập được (quyền `600`).
+- Không cần mở cổng nào trên router (Tailscale/NetBird tự kết nối VPS với máy nhà).
+- Kết nối điều khiển chỉ nhận từ chính máy này (Ubuntu: socket quyền `600`; Windows: `127.0.0.1`).
 - MCP **không có lệnh xóa**.
+- Bot Telegram chỉ trả lời Telegram ID nằm trong danh sách cho phép.
 
-**Bước 1: trên máy Ubuntu (một lần)**
+**Bước 1: nối VPS với máy nhà** (bỏ qua nếu Hermes chạy trong cùng mạng LAN). Chọn một trong hai:
 
-```bash
-sudo apt install openssh-server          # nếu chưa có
-./scripts/install_autostart.sh           # app tự chạy dưới khay khi đăng nhập
-```
+- [Tailscale](https://tailscale.com/download): cài trên **cả VPS và máy chạy app**, đăng nhập cùng
+  một tài khoản. Xem IP bằng `tailscale ip -4`.
+- [NetBird](https://netbird.io) (có thể tự host): cài trên **cả 2 máy**, chạy `netbird up` (tự host thì
+  thêm `--management-url https://netbird.ten-mien-cua-ban`) với cùng tài khoản/setup key. Xem IP bằng
+  `netbird status` (dòng `NetBird IP`). Nếu đã sửa Access Control mặc định, hãy cho phép VPS → máy
+  chạy app ở cổng TCP 22.
 
-Đặt **IP cố định** cho máy Ubuntu trong router (DHCP reservation), để IP không đổi sau khi khởi động
-lại.
+Máy chạy app sẽ có IP cố định dạng `100.x.y.z`; script ở bước 3 tự phát hiện IP này.
 
-**Bước 2: trên laptop chạy Hermes**, tạo khóa riêng cho Hermes:
-
-```bash
-ssh-keygen -t ed25519 -N "" -C hermes -f ~/.ssh/hermes_ubuntu
-```
-
-Chép file `~/.ssh/hermes_ubuntu.pub` sang máy Ubuntu (USB, `scp`…).
-
-**Bước 3: trên máy Ubuntu**, cấp quyền cho khóa đó:
+**Bước 2: trên VPS**, tạo khóa riêng cho Hermes:
 
 ```bash
-./scripts/setup_hermes_access.sh /đường/dẫn/hermes_ubuntu.pub
+ssh-keygen -t ed25519 -N "" -C hermes -f ~/.ssh/hermes_profile_ytb
 ```
 
-Script in ra đoạn cấu hình. Dán đoạn đó vào `~/.hermes/config.yaml` trên laptop:
+Chép file `~/.ssh/hermes_profile_ytb.pub` sang máy chạy app.
+
+**Bước 3: trên máy chạy app**, cấp quyền cho khóa đó và bật app tự chạy:
+
+| | Ubuntu | Windows (PowerShell, script tự hỏi quyền Administrator) |
+|---|---|---|
+| Cài SSH server | `sudo apt install openssh-server` | script tự cài OpenSSH Server |
+| Cấp quyền khóa | `./scripts/setup_hermes_access.sh hermes_profile_ytb.pub` | `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_access.ps1 hermes_profile_ytb.pub` |
+| App tự chạy khi đăng nhập | `./scripts/install_autostart.sh` | `powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1` |
+
+Script in ra đoạn cấu hình (đã điền sẵn user và IP Tailscale/NetBird). Dán vào `~/.hermes/config.yaml` trên VPS:
 
 ```yaml
 mcp_servers:
   profile_ytb:
     command: "ssh"
-    args: ["-T", "-i", "~/.ssh/hermes_ubuntu", "-o", "BatchMode=yes",
-           "-o", "ServerAliveInterval=30", "tienthanh@192.168.1.13"]
+    args: ["-T", "-i", "~/.ssh/hermes_profile_ytb", "-o", "BatchMode=yes",
+           "-o", "ServerAliveInterval=30", "ten_user@100.x.y.z"]
     timeout: 300
     connect_timeout: 60
 ```
 
-Lần đầu, chạy `ssh -i ~/.ssh/hermes_ubuntu tienthanh@192.168.1.13` một lần trên laptop và gõ `yes`
-để lưu khóa của máy Ubuntu. Lệnh sẽ đứng chờ vì MCP server đang chờ dữ liệu; bấm `Ctrl+C` để thoát.
+Lần đầu, chạy `ssh -i ~/.ssh/hermes_profile_ytb ten_user@100.x.y.z` một lần trên VPS và gõ `yes` để
+lưu khóa của máy. Lệnh sẽ đứng chờ vì MCP server đang chờ dữ liệu; bấm `Ctrl+C` để thoát.
+
+> Windows: user thuộc nhóm Administrators thì khóa nằm ở
+> `C:\ProgramData\ssh\administrators_authorized_keys` (script tự chọn đúng file).
 
 **Bước 4: cài skill cho Hermes.** Chép thư mục `hermes/profile-ytb/` của dự án vào
-`~/.hermes/skills/profile-ytb/` trên laptop. Skill hướng dẫn agent quy trình chuẩn và cách xử lý
+`~/.hermes/skills/profile-ytb/` trên VPS. Skill hướng dẫn agent quy trình chuẩn và cách xử lý
 từng lỗi. Sau đó mở phiên chat mới, hoặc gõ `/reload-mcp` trong phiên đang chạy.
+
+**Bước 5: điều khiển qua Telegram** (trên VPS)
+
+1. Tạo bot với [@BotFather](https://t.me/BotFather) → lấy **bot token**.
+2. Lấy **Telegram ID dạng số** của bạn từ [@userinfobot](https://t.me/userinfobot).
+3. Chạy `hermes gateway setup`, chọn Telegram, nhập token và ID. Hoặc tự ghi vào `~/.hermes/.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_ALLOWED_USERS=123456789
+   ```
+   **Luôn đặt `TELEGRAM_ALLOWED_USERS`**, nếu không ai tìm ra bot cũng điều khiển được Chrome của bạn.
+4. Chạy `hermes gateway` (nên chạy như dịch vụ để VPS khởi động lại vẫn tự bật), rồi nhắn bot:
+   *“mở profile Hung NT1”*, *“đóng hết Chrome”*, *“public 3 video private cho nhóm A”*.
 
 **Công cụ Hermes nhận được**
 
@@ -423,7 +450,8 @@ từng lỗi. Sau đó mở phiên chat mới, hoặc gõ `/reload-mcp` trong ph
 | `list_tasks`, `run_task`, `task_history` | Tác vụ có sẵn và lịch sử chạy |
 | `open_profiles`, `close_profiles` | Mở/đóng Chrome |
 
-**Giới hạn cho agent.** Thêm vào `~/.local/share/chrome-profile-manager/config/settings.json`:
+**Giới hạn cho agent.** Thêm vào `settings.json` (Ubuntu: `~/.local/share/chrome-profile-manager/config/`,
+Windows: `%LOCALAPPDATA%\ChromeProfileManager\chrome-profile-manager\config\`):
 
 ```json
 {
@@ -439,7 +467,7 @@ từng lỗi. Sau đó mở phiên chat mới, hoặc gõ `/reload-mcp` trong ph
 - Tác vụ có sẵn do bạn tạo, khi Hermes chạy bằng `run_task`, sẽ dùng đúng cấu hình của tác vụ đó.
 
 **Điều kiện:**
-- Máy Ubuntu bật, **đã đăng nhập màn hình** (khóa màn hình thì được, đăng xuất thì không).
+- Máy chạy app bật, **đã đăng nhập** (khóa màn hình thì được, đăng xuất thì không).
 - App Profile YTB đang chạy.
 
 Nếu app chưa chạy, Hermes nhận lỗi *“Không kết nối được ứng dụng Profile YTB”* và sẽ báo cho bạn.
@@ -476,7 +504,7 @@ Mọi dữ liệu nằm tại `~/.local/share/chrome-profile-manager/`:
 
 ```text
 profiles/   Dữ liệu Chrome của các Profile riêng (mỗi profile một thư mục theo ID)
-trash/      Profile đã chuyển vào thùng rác
+trash/      (phiên bản cũ) dữ liệu chờ xóa hẳn
 database/   SQLite: profile, tác vụ, lịch sử chạy
 logs/       app.log (nhật ký, xem ở mục “Nhật ký”) và screenshots/ (ảnh chụp khi public lỗi)
 config/     settings.json (cấu hình AI Agent)
@@ -535,7 +563,7 @@ app/services/controller.py           Mọi lệnh từ bên ngoài + giới hạ
 app/services/control_server.py       Socket điều khiển (/run/user/<uid>/profile-ytb-<mã>.sock)
 hermes/profile-ytb/SKILL.md          Skill cho Hermes
 app/services/chrome_process_service  Mở/đóng Chrome, phát hiện tiến trình, cổng CDP
-app/services/profile_service         Tạo/sửa/xóa/thùng rác/nhập-xuất profile
+app/services/profile_service         Tạo/sửa/xóa vĩnh viễn/nhập-xuất profile
 app/services/task_service            Chạy tác vụ: nhóm, thử lại, lịch sử
 app/services/scheduler_service       Lịch (APScheduler)
 app/services/studio_publisher        Public YouTube qua CDP (mở tab, nạp JS, thumbnail, theo dõi)

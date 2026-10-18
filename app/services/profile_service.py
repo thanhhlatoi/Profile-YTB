@@ -1,13 +1,15 @@
 import json
+import os
 import shutil
+import stat
+import sys
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 import psutil
 
-from app.constants import ProfileStatus
-from app.models.database import Profile
+from app.models.database import Profile, Task, TaskRun
 from app.services.chrome_profile_discovery import discover_chrome_profiles
 from app.utils.paths import ensure_inside, profile_path
 from app.utils.validation import ProfileInput, validate_binary
@@ -21,7 +23,7 @@ class ProfileService:
         binary = validate_binary(data.browser_binary)
         with self.session_factory() as session:
             if session.query(Profile).filter_by(name=data.name).first():
-                raise ValueError("Tên profile đã tồn tại (kể cả trong thùng rác)")
+                raise ValueError("Tên profile đã tồn tại")
             profile = Profile(
                 id=str(uuid4()),
                 name=data.name,
@@ -98,7 +100,7 @@ class ProfileService:
                 .first()
             )
             if duplicate:
-                raise ValueError("Tên profile đã tồn tại (kể cả trong thùng rác)")
+                raise ValueError("Tên profile đã tồn tại")
             for key, value in data.model_dump().items():
                 setattr(profile, key, "\n".join(value) if key == "startup_urls" else value)
             session.commit()
@@ -143,7 +145,7 @@ class ProfileService:
             if not source or source.deleted or not source.imported:
                 raise ValueError("Chỉ chuyển được profile Chrome gốc")
             if session.query(Profile).filter_by(name=name).first():
-                raise ValueError("Tên profile đã tồn tại (kể cả trong thùng rác)")
+                raise ValueError("Tên profile đã tồn tại")
             user_data_dir = Path(source.user_data_dir)
             source_dir = ensure_inside(user_data_dir / source.profile_directory, user_data_dir)
             if not source_dir.is_dir():
@@ -205,7 +207,7 @@ class ProfileService:
             if not source or source.deleted:
                 raise ValueError("Không tìm thấy profile")
             if session.query(Profile).filter_by(name=name).first():
-                raise ValueError("Tên profile đã tồn tại (kể cả trong thùng rác)")
+                raise ValueError("Tên profile đã tồn tại")
             clone = Profile(
                 id=str(uuid4()), name=name, profile_directory="Default",
                 browser_type=source.browser_type, browser_binary=source.browser_binary,
@@ -275,64 +277,119 @@ class ProfileService:
                 query = query.filter_by(deleted=False)
             return query.order_by(Profile.name).all()
 
-    def delete(self, profile_id: str) -> None:
+    @staticmethod
+    def _dir_in_use(data_dir: Path, default_dir: bool) -> bool:
+        """True if a Chrome process uses data_dir (or Chrome's default dir, when it is one)."""
+        target = data_dir.resolve()
+        for process in psutil.process_iter(["name", "cmdline"]):
+            if "chrom" not in (process.info["name"] or "").lower():
+                continue
+            args = process.info["cmdline"] or []
+            dirs = [a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir=")]
+            if (not dirs and default_dir) or (dirs and Path(dirs[0]).resolve() == target):
+                return True
+        return False
+
+    @staticmethod
+    def _remove_tree(path: Path) -> None:
+        def make_writable(func, failed_path, _error):
+            # Windows refuses to delete read-only files (Chrome marks some cache files so).
+            os.chmod(failed_path, stat.S_IWRITE)
+            func(failed_path)
+
+        if not path.exists():
+            return
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=make_writable)
+        else:
+            shutil.rmtree(path, onerror=make_writable)
+
+    @staticmethod
+    def _forget_in_local_state(user_data_dir: Path, directory: str) -> None:
+        """Drop the profile from Chrome's profile picker, as Chrome's own delete does."""
+        local_state = user_data_dir / "Local State"
+        try:
+            state = json.loads(local_state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        chrome = state.get("profile")
+        if not isinstance(chrome, dict):
+            return
+        info_cache = chrome.get("info_cache", {})
+        info_cache.pop(directory, None)
+        for key in ("last_active_profiles", "profiles_order"):
+            if isinstance(chrome.get(key), list):
+                chrome[key] = [item for item in chrome[key] if item != directory]
+        if chrome.get("last_used") == directory:
+            chrome["last_used"] = next(iter(info_cache), "Default")
+        temporary = local_state.with_name("Local State.cpm-tmp")
+        temporary.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(temporary, local_state)
+
+    def delete(self, profile_id: str) -> list[str]:
+        """Permanently wipe a profile: its browser data, Chrome entry, tasks and history.
+
+        Returns the ids of removed tasks so the caller can unschedule them.
+        """
         with self.session_factory() as session:
             profile = session.get(Profile, profile_id)
-            if not profile or profile.deleted:
+            if not profile:
                 raise ValueError("Không tìm thấy profile")
-            if profile.status == ProfileStatus.RUNNING:
-                raise ValueError("Không thể xóa profile đang chạy")
             if profile.imported:
-                if not profile.user_data_dir:
+                if not profile.user_data_dir or not profile.profile_directory:
                     raise ValueError("Profile Chrome không có thư mục dữ liệu")
                 user_data_dir = Path(profile.user_data_dir)
-                source = ensure_inside(
-                    user_data_dir / profile.profile_directory, user_data_dir
-                )
+                source = ensure_inside(user_data_dir / profile.profile_directory, user_data_dir)
+                if source == user_data_dir.resolve():
+                    raise ValueError("Từ chối xóa toàn bộ thư mục Chrome")
+                if self._dir_in_use(user_data_dir, default_dir=True):
+                    raise ValueError("Hãy đóng hết Google Chrome rồi xóa lại")
             else:
                 source = ensure_inside(
                     profile_path(self.paths.profiles, profile.id), self.paths.profiles
                 )
-            # Soft delete: data goes to trash so "Khôi phục" can bring it back.
-            target = ensure_inside(self.paths.trash / profile.id, self.paths.trash)
-            if source.exists():
-                shutil.move(str(source), str(target))
-            profile.deleted = True
-            profile.updated_at = datetime.now()
-            session.commit()
-
-    def restore(self, profile_id: str) -> None:
-        with self.session_factory() as session:
-            profile = session.get(Profile, profile_id)
-            if not profile or not profile.deleted:
-                raise ValueError("Không tìm thấy profile trong thùng rác")
-            source = ensure_inside(self.paths.trash / profile.id, self.paths.trash)
+                if self._dir_in_use(source, default_dir=False):
+                    raise ValueError("Profile đang mở, hãy đóng trước khi xóa")
+            # Data left in the trash by older versions (soft delete).
+            for path in (source, ensure_inside(self.paths.trash / profile.id, self.paths.trash)):
+                self._remove_tree(path)
             if profile.imported:
-                if not profile.user_data_dir:
-                    raise ValueError("Profile Chrome không có thư mục dữ liệu")
-                user_data_dir = Path(profile.user_data_dir)
-                target = ensure_inside(
-                    user_data_dir / profile.profile_directory, user_data_dir
-                )
-            else:
-                target = ensure_inside(self.paths.profiles / profile.id, self.paths.profiles)
-            if source.exists():
-                if target.exists():
-                    raise ValueError(f"Thư mục đích đã tồn tại: {target}")
-                shutil.move(str(source), str(target))
-            target.mkdir(parents=True, exist_ok=True, mode=0o700)
-            target.chmod(0o700)
-            profile.deleted = False
-            profile.updated_at = datetime.now()
-            session.commit()
+                self._forget_in_local_state(user_data_dir, profile.profile_directory)
 
-    def permanent_delete(self, profile_id: str) -> None:
-        with self.session_factory() as session:
-            profile = session.get(Profile, profile_id)
-            if not profile or not profile.deleted:
-                raise ValueError("Không tìm thấy profile trong thùng rác")
-            target = ensure_inside(self.paths.trash / profile.id, self.paths.trash)
-            if target.exists():
-                shutil.rmtree(target)
+            removed_tasks = []
+            for task in session.query(Task).filter_by(profile_id=profile.id).all():
+                if task.target_group:
+                    # Group tasks only use the profile as an anchor; move it to another member.
+                    other = (
+                        session.query(Profile)
+                        .filter(
+                            Profile.group_name == task.target_group,
+                            Profile.deleted.is_(False),
+                            Profile.id != profile.id,
+                        )
+                        .order_by(Profile.name)
+                        .first()
+                    )
+                    if other:
+                        task.profile_id = other.id
+                        continue
+                session.query(TaskRun).filter_by(task_id=task.id).delete()
+                session.delete(task)
+                removed_tasks.append(task.id)
+            session.query(TaskRun).filter_by(profile_id=profile.id).delete()
             session.delete(profile)
             session.commit()
+            return removed_tasks
+
+    def purge_trash(self) -> list[str]:
+        """Wipe profiles soft-deleted by older versions; returns the ids of removed tasks."""
+        removed_tasks = []
+        with self.session_factory() as session:
+            ids = [p.id for p in session.query(Profile).filter_by(deleted=True)]
+        for profile_id in ids:
+            try:
+                removed_tasks += self.delete(profile_id)
+            except (OSError, ValueError):
+                # E.g. Chrome is open; retried on the next start.
+                pass
+        return removed_tasks

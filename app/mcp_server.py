@@ -18,7 +18,7 @@ SOCKET = control_server.socket_path(AppPaths.create())
 server = MCPServer(
     name="profile-ytb",
     instructions=(
-        "Điều khiển Chrome Profile Manager (Profile YTB) trên máy Ubuntu để public video nháp "
+        "Điều khiển Chrome Profile Manager (Profile YTB) trên máy của người dùng để public video nháp "
         "YouTube. Quy trình chuẩn: list_profiles -> check_channel -> publish -> task_status "
         "(lặp lại mỗi 30-60 giây tới khi finished=true) -> báo kết quả. Publish chạy nền và "
         "trả về task_id ngay. Không đoán tên profile: lấy từ list_profiles."

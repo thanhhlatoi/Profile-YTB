@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cho Hermes Agent (máy khác trong mạng nhà) điều khiển Profile YTB qua SSH.
+# Cho Hermes Agent (VPS hoặc máy khác trong mạng nhà) điều khiển Profile YTB qua SSH.
 # Dùng: ./scripts/setup_hermes_access.sh /đường/dẫn/hermes_ubuntu.pub
 # Khóa này CHỈ chạy được MCP server của Profile YTB: không mở được shell, không forward cổng.
 set -euo pipefail
@@ -44,7 +44,18 @@ else
   printf 'Đã thêm khóa (chỉ được chạy MCP).\n'
 fi
 
-IP="$(hostname -I | awk '{print $1}')"
+# Hermes trên VPS đi qua Tailscale hoặc NetBird; không có thì dùng IP mạng LAN.
+NETWORK="Tailscale"
+IP="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
+if [[ -z "$IP" ]]; then
+  NETWORK="NetBird"
+  # "NetBird IP: 100.92.1.2/16"
+  IP="$(netbird status 2>/dev/null | sed -n 's/^ *NetBird IP: *\([0-9.]*\).*/\1/p' | head -n1 || true)"
+fi
+if [[ -z "$IP" ]]; then
+  NETWORK="mạng LAN"
+  IP="$(hostname -I | awk '{print $1}')"
+fi
 cat <<INFO
 
 Xong. Dán đoạn sau vào ~/.hermes/config.yaml trên máy chạy Hermes
@@ -59,6 +70,7 @@ mcp_servers:
     connect_timeout: 60
 
 Lưu ý:
-- Đặt IP cố định cho máy Ubuntu này ($IP) trong router (DHCP reservation).
+- IP trên lấy từ $NETWORK ($IP). Hermes chạy trên VPS thì cần Tailscale hoặc NetBird trên cả 2 máy;
+  dùng mạng LAN thì đặt IP cố định cho máy này trong router (DHCP reservation).
 - App Profile YTB phải đang chạy (dưới khay) thì Hermes mới thao tác được.
 INFO
