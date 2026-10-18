@@ -12,41 +12,52 @@ from app.utils.validation import ProfileInput
 def setup(tmp_path):
     paths = AppPaths.create(tmp_path / "data")
     service = ProfileService(paths, create_session_factory(paths.db_url))
-    binary = tmp_path / "chrome"
+    binary = tmp_path / ("chrome.exe" if os.name == "nt" else "chrome")
     binary.write_text("x")
     binary.chmod(os.stat(binary).st_mode | 0o111)
     return paths, service, str(binary)
 
 
-def test_delete_moves_to_trash_then_restore_and_purge(tmp_path):
+def test_delete_wipes_own_profile_and_its_tasks(tmp_path):
+    from app.models.database import Task, TaskRun
+
     paths, service, binary = setup(tmp_path)
     profile = service.create(ProfileInput(name="A", browser_binary=binary))
-    with pytest.raises(ValueError):
-        service.create(ProfileInput(name="A", browser_binary=binary))
-    service.delete(profile.id)
-    assert not (paths.profiles / profile.id).exists()
-    assert (paths.trash / profile.id).is_dir()
-    assert service.list() == []
-    with pytest.raises(ValueError):
-        service.create(ProfileInput(name="A", browser_binary=binary))
-    service.restore(profile.id)
-    assert (paths.profiles / profile.id).is_dir()
-    service.delete(profile.id)
-    service.permanent_delete(profile.id)
-    assert not (paths.trash / profile.id).exists()
+    data_dir = paths.profiles / profile.id
+    (data_dir / "Default").mkdir()
+    readonly = data_dir / "Default" / "Cookies"
+    readonly.write_text("x")
+    readonly.chmod(0o444)
+    with service.session_factory() as session:
+        session.add(Task(id="t1", name="T", profile_id=profile.id, action_type="open"))
+        session.add(TaskRun(task_id="t1", profile_id=profile.id))
+        session.commit()
+
+    assert service.delete(profile.id) == ["t1"]
+    assert not data_dir.exists()
     assert service.list(include_deleted=True) == []
+    with service.session_factory() as session:
+        assert session.query(Task).count() == 0
+        assert session.query(TaskRun).count() == 0
+    service.create(ProfileInput(name="A", browser_binary=binary))  # Name is free again.
 
 
-def test_delete_imported_profile_is_recoverable(tmp_path):
+def test_delete_imported_profile_removes_folder_and_chrome_entry(tmp_path, monkeypatch):
+    from app.models.database import Profile
+
     paths, service, binary = setup(tmp_path)
+    monkeypatch.setattr(ProfileService, "_dir_in_use", staticmethod(lambda *_a, **_k: False))
     user_data_dir = tmp_path / "chrome-user-data"
     chrome_profile = user_data_dir / "Profile 1"
     chrome_profile.mkdir(parents=True)
     (chrome_profile / "Preferences").write_text("{}")
-
+    (user_data_dir / "Local State").write_text(json.dumps({"profile": {
+        "info_cache": {"Default": {}, "Profile 1": {}},
+        "last_used": "Profile 1",
+        "last_active_profiles": ["Profile 1", "Default"],
+        "profiles_order": ["Default", "Profile 1"],
+    }}))
     with service.session_factory() as session:
-        from app.models.database import Profile
-
         profile = Profile(
             name="Imported",
             profile_directory="Profile 1",
@@ -60,10 +71,45 @@ def test_delete_imported_profile_is_recoverable(tmp_path):
 
     service.delete(profile_id)
     assert not chrome_profile.exists()
-    assert (paths.trash / profile_id / "Preferences").exists()
-    assert service.list() == []
-    service.restore(profile_id)
-    assert (chrome_profile / "Preferences").exists()
+    assert (user_data_dir / "Default").exists() is False  # Untouched siblings stay as they were.
+    state = json.loads((user_data_dir / "Local State").read_text())["profile"]
+    assert list(state["info_cache"]) == ["Default"]
+    assert state["last_used"] == "Default"
+    assert state["last_active_profiles"] == ["Default"]
+    assert state["profiles_order"] == ["Default"]
+    assert service.list(include_deleted=True) == []
+
+
+def test_delete_imported_refused_while_chrome_runs(tmp_path, monkeypatch):
+    from app.models.database import Profile
+
+    paths, service, binary = setup(tmp_path)
+    monkeypatch.setattr(ProfileService, "_dir_in_use", staticmethod(lambda *_a, **_k: True))
+    user_data_dir = tmp_path / "chrome-user-data"
+    (user_data_dir / "Profile 1").mkdir(parents=True)
+    with service.session_factory() as session:
+        profile = Profile(name="I", profile_directory="Profile 1", user_data_dir=str(user_data_dir),
+                          imported=True, browser_binary=binary)
+        session.add(profile)
+        session.commit()
+        profile_id = profile.id
+    with pytest.raises(ValueError):
+        service.delete(profile_id)
+    assert (user_data_dir / "Profile 1").exists()
+
+
+def test_purge_trash_finishes_old_soft_deletes(tmp_path):
+    paths, service, binary = setup(tmp_path)
+    profile = service.create(ProfileInput(name="Old", browser_binary=binary))
+    (paths.profiles / profile.id).rename(paths.trash / profile.id)
+    with service.session_factory() as session:
+        from app.models.database import Profile
+
+        session.get(Profile, profile.id).deleted = True
+        session.commit()
+    service.purge_trash()
+    assert not (paths.trash / profile.id).exists()
+    assert service.list(include_deleted=True) == []
 
 
 def test_clone_copies_configuration_without_importing_browser_data(tmp_path):

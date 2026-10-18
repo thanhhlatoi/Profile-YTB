@@ -10,7 +10,7 @@ from app.utils.validation import ProfileInput
 def test_task_run(tmp_path):
     paths = AppPaths.create(tmp_path / "data")
     factory = create_session_factory(paths.db_url)
-    binary = tmp_path / "chrome"
+    binary = tmp_path / ("chrome.exe" if os.name == "nt" else "chrome")
     binary.write_text("x")
     binary.chmod(os.stat(binary).st_mode | 0o111)
     profiles = ProfileService(paths, factory)

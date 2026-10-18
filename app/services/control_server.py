@@ -16,6 +16,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 SOCKET_NAME = "control.sock"
+HAS_UNIX = hasattr(socketserver, "ThreadingUnixStreamServer")
 
 
 def socket_path(paths) -> Path:
@@ -23,6 +24,8 @@ def socket_path(paths) -> Path:
 
     Unix socket paths are limited to ~108 bytes, so a deep data folder is a last resort.
     """
+    if not hasattr(os, "getuid"):
+        return paths.root / SOCKET_NAME
     runtime = Path(f"/run/user/{os.getuid()}")
     if not runtime.is_dir():
         return paths.root / SOCKET_NAME
@@ -53,7 +56,12 @@ class ControlServer:
     def __init__(self, path: Path, controller):
         self.path = Path(path)
         self.path.unlink(missing_ok=True)  # Stale socket from a crash.
-        self.server = socketserver.ThreadingUnixStreamServer(str(self.path), _Handler)
+        if HAS_UNIX:
+            self.server = socketserver.ThreadingUnixStreamServer(str(self.path), _Handler)
+        else:
+            # Windows: loopback TCP; the "socket" file holds the port number.
+            self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
+            self.path.write_text(str(self.server.server_address[1]), encoding="utf-8")
         self.server.daemon_threads = True
         self.server.controller = controller
         os.chmod(self.path, 0o600)
@@ -67,10 +75,30 @@ class ControlServer:
         self.path.unlink(missing_ok=True)
 
 
+def _connect(path: Path, timeout: float | None = None) -> socket.socket:
+    if HAS_UNIX:
+        client = socket.socket(socket.AF_UNIX)
+        address = str(path)
+    else:
+        try:
+            port = int(Path(path).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError) as error:
+            raise OSError("Control port file missing") from error
+        client = socket.socket(socket.AF_INET)
+        address = ("127.0.0.1", port)
+    try:
+        client.settimeout(timeout)
+        client.connect(address)
+    except OSError:
+        client.close()
+        raise
+    return client
+
+
 def available(path: Path) -> bool:
     try:
-        with socket.socket(socket.AF_UNIX) as probe:
-            probe.connect(str(path))
+        with _connect(path, timeout=2):
+            pass
         return True
     except OSError:
         return False
@@ -79,15 +107,13 @@ def available(path: Path) -> bool:
 def call(path: Path, command: str, args: dict | None = None, agent: bool = False,
          timeout: float = 600):
     try:
-        with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(timeout)
-            client.connect(str(path))
+        with _connect(path, timeout) as client:
             message = {"command": command, "args": args or {}, "agent": agent}
             client.sendall(json.dumps(message).encode() + b"\n")
             reply = client.makefile("rb").readline()
     except OSError as error:
         raise ControlError(
-            "Không kết nối được ứng dụng Profile YTB. Hãy mở ứng dụng trên máy Ubuntu."
+            "Không kết nối được ứng dụng Profile YTB. Hãy mở ứng dụng trên máy của bạn."
         ) from error
     if not reply:
         raise ControlError("Ứng dụng Profile YTB không trả lời")

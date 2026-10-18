@@ -1,11 +1,11 @@
 ---
 name: profile-ytb
-description: Public video nháp YouTube trên nhiều kênh qua Profile YTB (Chrome Profile Manager) chạy trên máy Ubuntu của người dùng. Dùng khi người dùng muốn kiểm tra kênh, public/lên lịch video nháp, xem tiến độ hoặc dừng việc public.
+description: Public video nháp YouTube trên nhiều kênh qua Profile YTB (Chrome Profile Manager) chạy trên máy Windows/Ubuntu của người dùng. Dùng khi người dùng muốn kiểm tra kênh, public/lên lịch video nháp, xem tiến độ hoặc dừng việc public.
 ---
 
 # Profile YTB: public video YouTube
 
-Các công cụ đến từ MCP server `profile_ytb` (máy Ubuntu của người dùng, qua SSH).
+Các công cụ đến từ MCP server `profile_ytb` (máy Windows/Ubuntu của người dùng, qua SSH).
 Luôn trả lời người dùng bằng tiếng Việt.
 
 ## Quy trình chuẩn
@@ -27,7 +27,7 @@ Luôn trả lời người dùng bằng tiếng Việt.
 
 | Lỗi chứa | Việc cần làm |
 |---|---|
-| `Không kết nối được ứng dụng Profile YTB` | App chưa chạy trên máy Ubuntu. Nhờ người dùng mở app. Không thử lại liên tục. |
+| `Không kết nối được ứng dụng Profile YTB` | App chưa chạy trên máy người dùng. Nhờ người dùng mở app. Không thử lại liên tục. |
 | `chưa đăng nhập YouTube` | Người dùng phải mở profile đó và đăng nhập. Agent không làm được. |
 | `Không thấy danh sách video` | Link Studio của profile sai hoặc YouTube chậm. Thử lại `check_channel` **một** lần, sau đó báo người dùng (kèm đường dẫn ảnh chụp nếu có). |
 | `Agent không được public ở chế độ` | Chính sách giới hạn. Báo người dùng, không tự đổi sang chế độ khác. |

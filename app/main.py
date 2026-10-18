@@ -42,6 +42,8 @@ def main() -> int:
     process.discover()
     profiles = ProfileService(paths, session_factory)
     tasks = TaskService(session_factory, process)
+    # Older versions soft-deleted into a trash; finish those deletes.
+    profiles.purge_trash()
     scheduler = SchedulerService(tasks)
     scheduler.start()
     scheduler.restore()

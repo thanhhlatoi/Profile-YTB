@@ -12,6 +12,8 @@ def chrome_user_data_dirs(home: Path | None = None) -> list[Path]:
         home / ".config/chromium-browser",
         home / ".var/app/com.google.Chrome/config/google-chrome",
         home / ".var/app/org.chromium.Chromium/config/chromium",
+        home / "AppData/Local/Google/Chrome/User Data",
+        home / "AppData/Local/Chromium/User Data",
     ]
     return list(dict.fromkeys(path for path in candidates if path.is_dir()))
 
@@ -39,7 +41,13 @@ def discover_chrome_profiles(home: Path | None = None) -> list[dict[str, str]]:
         binary = shutil.which("google-chrome") or shutil.which("google-chrome-stable")
         if "chromium" in user_data_dir.name:
             binary = binary or shutil.which("chromium") or shutil.which("chromium-browser")
-        binary = binary or "/usr/bin/google-chrome"
+        if not binary:
+            from app.services.browser_detection import KNOWN_BINARIES
+
+            binary = next(
+                (path for path in KNOWN_BINARIES if Path(path).is_file()),
+                "/usr/bin/google-chrome",
+            )
         for directory in sorted(directories, key=lambda value: (value != "Default", value)):
             if not (user_data_dir / directory).is_dir():
                 continue
