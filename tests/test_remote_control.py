@@ -6,6 +6,7 @@ import pytest
 
 from app import mcp_server
 from app.config import AppPaths
+from app.constants import ActionType
 from app.models.database import create_session_factory
 from app.services import control_server
 from app.services.chrome_process_service import ChromeProcessService
@@ -71,6 +72,44 @@ def test_agent_policy_caps_videos_and_blocks_visibility(controller):
         ctl.handle("publish", {"profile": "A", "visibility": "public"}, agent=True)
     # The user (not the agent) is not limited.
     ctl.handle("publish", {"profile": "B", "visibility": "public"})
+
+
+def test_agent_run_task_cannot_bypass_limits(controller):
+    ctl, settings = controller
+    settings.write_text(json.dumps({"agent": {"allowed_visibility": ["private", "unlisted"],
+                                              "max_videos": 5}}))
+    profile = next(p for p in ctl.profiles.list() if p.name == "A")  # private by config
+
+    def saved_task(payload):
+        return ctl.tasks.create(
+            name="Saved", profile_id=profile.id, target_group="",
+            action_type=ActionType.PUBLISH_YOUTUBE, payload=json.dumps(payload),
+            schedule_type="immediate",
+        )
+
+    public_task = saved_task({"maxVideos": 50, "visibility": "public"})
+    with pytest.raises(PermissionError, match="public"):
+        ctl.handle("run_task", {"task": public_task.id}, agent=True)
+    assert ctl.tasks.publisher.calls == []
+    # Without a visibility in the task, profile A's private setting applies; videos are capped.
+    plain_task = saved_task({"maxVideos": 50})
+    ctl.handle("run_task", {"task": plain_task.id}, agent=True)
+    assert ctl.tasks.publisher.calls[-1][1] == {"maxVideos": 5}
+    # The user running the same task is not limited.
+    ctl.handle("run_task", {"task": plain_task.id})
+    assert ctl.tasks.publisher.calls[-1][1] == {"maxVideos": 50}
+
+
+def test_channel_status_reports_last_publish_without_browser(controller):
+    ctl, _ = controller
+    ctl.handle("publish", {"profile": "A"})
+    status = ctl.handle("channel_status", {"profile": "A"}, agent=True)
+    assert status["visibility"] == "private"
+    assert status["publish_runs_recorded"] == 1
+    assert status["last_publish"]["result"] == "Xong 2/2 video"
+    assert ctl.handle("channel_status", {"profile": "B"})["last_publish"] is None
+    with pytest.raises(ValueError, match="Không tìm thấy profile"):
+        ctl.handle("channel_status", {"profile": "Nope"})
 
 
 def test_socket_round_trip_and_mcp_tool(controller, tmp_path, monkeypatch):

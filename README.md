@@ -443,6 +443,7 @@ từng lỗi. Sau đó mở phiên chat mới, hoặc gõ `/reload-mcp` trong ph
 | Công cụ | Việc làm |
 |---|---|
 | `list_profiles` | Liệt kê profile, nhóm, trạng thái |
+| `channel_status` | Trạng thái kênh (không mở YouTube): profile đang mở, chế độ hiển thị, lần đăng gần nhất |
 | `check_channel` | Kiểm tra kênh: số nháp, nháp trùng số, thiếu thumbnail (không đăng) |
 | `publish` | Public một profile hoặc cả nhóm (chạy nền, trả về `task_id`) |
 | `task_status` | Tiến độ: video thứ mấy, thành công, lỗi, kết quả từng kênh |

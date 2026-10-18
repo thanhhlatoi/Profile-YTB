@@ -56,9 +56,9 @@ class SchedulerService:
         except JobLookupError:
             pass
 
-    def run_now(self, task_id: str) -> None:
+    def run_now(self, task_id: str, overrides: dict | None = None) -> None:
         """Run in the scheduler's thread pool so the UI never blocks."""
-        self.scheduler.add_job(self._run, args=[task_id], id=f"now-{task_id}")
+        self.scheduler.add_job(self._run, args=[task_id, overrides], id=f"now-{task_id}")
 
     def is_running_now(self, task_id: str) -> bool:
         return self.scheduler.get_job(f"now-{task_id}") is not None
@@ -67,9 +67,9 @@ class SchedulerService:
         job = self.scheduler.get_job(task_id)
         return job.next_run_time if job else None
 
-    def _run(self, task_id: str) -> None:
+    def _run(self, task_id: str, overrides: dict | None = None) -> None:
         try:
-            self.task_service.run(task_id)
+            self.task_service.run(task_id, overrides)
         except Exception:
             logger.exception("Tác vụ %s thất bại", task_id)
 

@@ -8,6 +8,13 @@ description: Public video nháp YouTube trên nhiều kênh qua Profile YTB (Chr
 Các công cụ đến từ MCP server `profile_ytb` (máy Windows/Ubuntu của người dùng, qua SSH).
 Luôn trả lời người dùng bằng tiếng Việt.
 
+## Khi người dùng hỏi tình hình kênh (không đăng gì)
+
+1. `list_profiles` để lấy tên profile.
+2. `channel_status(profile)`: profile đang mở không, chế độ hiển thị mặc định, lần đăng gần nhất.
+3. `check_channel(profile)` nếu cần số nháp, nháp trùng số, nháp thiếu thumbnail.
+Hai tool này chỉ đọc. Không gọi `publish` nếu người dùng không yêu cầu.
+
 ## Quy trình chuẩn
 
 1. `list_profiles` để lấy đúng tên profile hoặc nhóm. Không tự đoán tên.
