@@ -73,8 +73,19 @@ class ChromeProcessService:
                 matches = {pid: ppid for pid, ppid, args in snapshot if markers <= args}
                 # The browser root is the matching process whose parent is not also a match.
                 roots = [pid for pid, ppid in matches.items() if ppid not in matches]
-                profile.pid = min(roots) if roots else None
-                profile.status = ProfileStatus.RUNNING if roots else ProfileStatus.STOPPED
+                launched = self._processes.get(profile.id)
+                if roots:
+                    profile.pid = min(roots)
+                    profile.status = ProfileStatus.RUNNING
+                elif launched and launched.poll() is None:
+                    # Started by this app and still alive, even if its command line differs
+                    # (wrapper scripts, snap/flatpak). Keep it running until it exits.
+                    profile.pid = launched.pid
+                    profile.status = ProfileStatus.RUNNING
+                else:
+                    self._processes.pop(profile.id, None)
+                    profile.pid = None
+                    profile.status = ProfileStatus.STOPPED
             session.commit()
 
     def is_running(self, profile: Profile) -> bool:

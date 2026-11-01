@@ -12,8 +12,9 @@ from app.services.studio_publisher import StudioPublisher
 
 
 class TaskService:
-    def __init__(self, session_factory, process_service, publisher=None, retry_delay=30):
+    def __init__(self, session_factory, process_service, publisher=None, retry_delay=30, reporter=None):
         self.session_factory, self.process_service = session_factory, process_service
+        self.reporter = reporter  # BeReporter: bao ket qua ve gmail-manager BE (tuy chon)
         self.publisher = publisher or StudioPublisher(process_service)
         self.retry_delay = retry_delay
         self._profile_locks: dict[str, RLock] = {}
@@ -178,6 +179,13 @@ class TaskService:
             run.status = TaskStatus.FAILED if error else TaskStatus.SUCCESS
             run.attempts, run.error, run.detail = max(1, attempts), error, detail
             session.commit()
+        if self.reporter:
+            try:
+                self.reporter.report_run(
+                    task.name, task.action_type, profile.name, profile.channel_url or "", error
+                )
+            except Exception:  # bao cao la phu, khong duoc lam hong tac vu
+                pass
         return error
 
     def _execute(self, action_type: str, profile_id: str, payload: dict) -> str | None:

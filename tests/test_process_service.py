@@ -1,8 +1,12 @@
+import os
 from types import SimpleNamespace
 
 from app.config import AppPaths
-from app.models.database import create_session_factory
+from app.constants import ProfileStatus
+from app.models.database import Profile, create_session_factory
 from app.services.chrome_process_service import ChromeProcessService
+from app.services.profile_service import ProfileService
+from app.utils.validation import ProfileInput
 
 
 class FakeProcess:
@@ -32,6 +36,25 @@ def test_build_command_and_no_shell(tmp_path):
     assert "--user-data-dir=" in command[1]
     assert "--profile-directory=Default" in command
     assert "https://example.com" in command
+
+
+def test_app_started_browser_stays_running_when_command_line_differs(tmp_path):
+    paths = AppPaths.create(tmp_path / "data")
+    factory = create_session_factory(paths.db_url)
+    binary = tmp_path / ("chrome.exe" if os.name == "nt" else "chrome")
+    binary.write_text("x")
+    binary.chmod(binary.stat().st_mode | 0o111)
+    profile = ProfileService(paths, factory).create(
+        ProfileInput(name="A", browser_binary=str(binary))
+    )
+    service = ChromeProcessService(
+        paths, factory, process_factory=lambda command, shell, start_new_session: FakeProcess()
+    )
+    service.open(profile.id)
+    service.discover()  # No process on this machine carries the profile's arguments.
+    with factory() as session:
+        stored = session.get(Profile, profile.id)
+        assert stored.status == ProfileStatus.RUNNING and stored.pid == 1234
 
 
 def test_profile_1_does_not_match_profile_10(tmp_path):

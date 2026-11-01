@@ -17,8 +17,10 @@ DEFAULT_AGENT_POLICY = {
 
 
 class Controller:
-    def __init__(self, profiles, process, tasks, scheduler=None, settings_path=None):
+    def __init__(self, profiles, process, tasks, scheduler=None, settings_path=None,
+                 downloads=None):
         self.profiles, self.process, self.tasks = profiles, process, tasks
+        self.downloads = downloads
         self.scheduler = scheduler
         self.settings_path = settings_path
 
@@ -241,3 +243,29 @@ class Controller:
         self.tasks.stop(chosen.id)
         return {"task_id": chosen.id, "stop_requested": True,
                 "note": "Dừng sau khi xong video đang xử lý"}
+
+    # --- video download ----------------------------------------------------------------
+
+    def _downloader(self):
+        if not self.downloads:
+            raise ValueError("Tính năng tải video chưa được bật")
+        return self.downloads
+
+    def cmd_download(
+        self, agent=False, url=None, sub_lang="en", range=None, folder=None, drive=None
+    ):
+        return self._downloader().start(url, sub_lang, range, folder, drive)
+
+    def cmd_download_batch(
+        self, agent=False, urls=None, sub_lang="en", range=None, folder=None, drive=None
+    ):
+        return self._downloader().start_batch(urls, sub_lang, range, folder, drive)
+
+    def cmd_download_locations(self, agent=False):
+        return self._downloader().where()
+
+    def cmd_download_status(self, agent=False, job=None):
+        return self._downloader().status(job)
+
+    def cmd_download_stop(self, agent=False, job=None):
+        return self._downloader().stop(job)

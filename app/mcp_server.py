@@ -116,5 +116,58 @@ def close_profiles(
     return _call("close", names=names, group=group)
 
 
+@server.tool()
+def download_locations() -> list[dict]:
+    """Các ổ/nơi lưu được phép khi tải video (drive, path, free_gb). Gọi khi người dùng nói
+    ổ đĩa hoặc hỏi có thể lưu ở đâu; chỉ dùng tên trong danh sách này cho tham số drive."""
+    return _call("download_locations")
+
+
+@server.tool()
+def download_video(
+    url: str,
+    sub_lang: str = "en",
+    range: str | None = None,
+    folder: str | None = None,
+    drive: str | None = None,
+) -> dict:
+    """Tải video YouTube (kèm sub .srt và thumbnail) về máy người dùng. url là link video,
+    playlist hoặc kênh; sub_lang như en/ja; range như "3-7" (STT, chỉ cho kênh/playlist);
+    drive là ổ đĩa như "E" hoặc "F" (xem download_locations; bỏ trống = nơi mặc định);
+    folder là tên thư mục con trong ổ đó. Chạy nền, trả về job_id; theo dõi bằng download_status."""
+    return _call(
+        "download", url=url, sub_lang=sub_lang, range=range, folder=folder, drive=drive
+    )
+
+
+@server.tool()
+def download_batch(
+    urls: list[str],
+    sub_lang: str = "en",
+    range: str | None = None,
+    folder: str | None = None,
+    drive: str | None = None,
+) -> dict:
+    """Tải NHIỀU link YouTube một lần (tối đa 20). Các job xếp hàng và chạy lần lượt; cùng
+    sub_lang, range, folder, drive cho cả lô. Trả về danh sách job_id; theo dõi bằng
+    download_status()."""
+    return _call(
+        "download_batch", urls=urls, sub_lang=sub_lang, range=range, folder=folder, drive=drive
+    )
+
+
+@server.tool()
+def download_status(job: str | None = None) -> dict | list:
+    """Tiến độ tải video: status (QUEUED/RUNNING/SUCCESS/FAILED/CANCELLED), finished,
+    thư mục đã lưu, log_tail. Bỏ trống job để xem tất cả."""
+    return _call("download_status", job=job)
+
+
+@server.tool()
+def download_stop(job: str) -> dict:
+    """Dừng một job tải video đang chạy hoặc đang chờ."""
+    return _call("download_stop", job=job)
+
+
 if __name__ == "__main__":
     server.run("stdio")

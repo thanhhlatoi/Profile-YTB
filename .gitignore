@@ -11,3 +11,8 @@ build/
 .env.*
 !.env.example
 *.egg-info/
+cookies.txt
+tools/
+# file / thu muc sao luu tam truoc khi sua (khong commit)
+*.bak_*
+.bak_*/
